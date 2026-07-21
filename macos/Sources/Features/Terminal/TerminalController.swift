@@ -1245,6 +1245,13 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         LastWindowPosition.shared.save(window)
     }
 
+    func windowDidChangeScreen(_ notification: Notification) {
+        // A display change (e.g. unplugging a monitor) migrates the window to
+        // another screen and can leave the tab bar in a stale/black state.
+        // Re-composite it the same way we do on move and focus.
+        self.fixTabBar()
+    }
+
     func windowDidBecomeMain(_ notification: Notification) {
         // Whenever we get focused, use that as our last window position for
         // restart. This differs from Terminal.app but matches iTerm2 behavior
