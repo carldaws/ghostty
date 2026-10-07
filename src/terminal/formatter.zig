@@ -1384,6 +1384,15 @@ pub const PageFormatter = struct {
                 // This cell is not blank. If we have accumulated blank cells
                 // then we want to emit them now.
                 if (blank_cells > 0) {
+                    // Blank cells are unstyled, so close the current style
+                    // to keep its background off the spaces standing in
+                    // for them.
+                    if (!style.default()) {
+                        try self.formatStyleClose(emit, writer);
+                        style = .{};
+                        style_id = 0;
+                    }
+
                     try writer.splatByteAll(' ', blank_cells);
 
                     if (self.point_map) |*map| try self.appendBlankPoints(
@@ -7112,6 +7121,33 @@ test "Page plain skips a row with only a background color" {
     var formatter: PageFormatter = .init(page, .plain);
     try formatter.format(&builder.writer);
     try testing.expectEqualStrings("top\n\nbottom", builder.writer.buffered());
+}
+
+test "Page VT keeps a background off skipped cells" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var builder: std.Io.Writer.Allocating = .init(alloc);
+    defer builder.deinit();
+
+    var t = try Terminal.init(io, alloc, .{
+        .cols = 20,
+        .rows = 5,
+    });
+    defer t.deinit(alloc);
+
+    var s = t.vtStream();
+    defer s.deinit();
+
+    s.nextSlice("\x1b[41mab\x1b[6G\x1b[0mcd");
+
+    const pages = &t.screens.active.pages;
+    const page = pages.pages.last.?.page();
+
+    var formatter: PageFormatter = .init(page, .vt);
+    try formatter.format(&builder.writer);
+    try testing.expectEqualStrings("\x1b[0m\x1b[48;5;1mab\x1b[0m   cd", builder.writer.buffered());
 }
 
 test "Screen VT keeps blank rows at the bottom of the screen" {
