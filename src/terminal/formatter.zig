@@ -63,6 +63,14 @@ pub fn formatStyled(fmt: Format) bool {
     };
 }
 
+fn hasStyledCellAny(cells: []const Cell) bool {
+    for (cells) |cell| {
+        if (!cell.isEmpty() or cell.hasStyling()) return true;
+    }
+
+    return false;
+}
+
 pub const CodepointMap = struct {
     /// Unicode codepoint range to replace.
     /// Asserts: range[0] <= range[1]
@@ -1216,7 +1224,9 @@ pub const PageFormatter = struct {
             // If this row is blank, accumulate to avoid a bunch of extra
             // work later. If it isn't blank, make sure we dump all our
             // blanks.
-            if (!Cell.hasTextAny(cells_subset)) {
+            if (!Cell.hasTextAny(cells_subset) and
+                !(formatStyled(emit) and hasStyledCellAny(cells_subset)))
+            {
                 blank_rows += 1;
                 continue;
             }
@@ -7027,4 +7037,66 @@ test "Page HTML hyperlink point map maps closing to previous cell" {
     for (closing_idx..closing_idx + "</a>".len) |i| {
         try testing.expectEqual(expected_coord, point_map.items[i]);
     }
+}
+
+test "Page VT background color on a row without text" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var builder: std.Io.Writer.Allocating = .init(alloc);
+    defer builder.deinit();
+
+    var t = try Terminal.init(io, alloc, .{
+        .cols = 20,
+        .rows = 5,
+    });
+    defer t.deinit(alloc);
+
+    var s = t.vtStream();
+    defer s.deinit();
+
+    s.nextSlice("top\r\n\x1b[41m\x1b[K\x1b[0m\r\nbottom");
+
+    const pages = &t.screens.active.pages;
+    const page = pages.pages.last.?.page();
+
+    var formatter: PageFormatter = .init(page, .vt);
+    try formatter.format(&builder.writer);
+    const output = builder.writer.buffered();
+
+    const first_row_end = std.mem.indexOf(u8, output, "\r\n") orelse
+        return error.TestUnexpectedResult;
+    const bottom = std.mem.indexOf(u8, output, "bottom") orelse
+        return error.TestUnexpectedResult;
+    const middle_row = output[first_row_end..bottom];
+    try testing.expect(std.mem.indexOf(u8, middle_row, "\x1b[41m") != null or
+        std.mem.indexOf(u8, middle_row, "\x1b[48;5;1m") != null);
+}
+
+test "Page plain skips a row with only a background color" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var builder: std.Io.Writer.Allocating = .init(alloc);
+    defer builder.deinit();
+
+    var t = try Terminal.init(io, alloc, .{
+        .cols = 20,
+        .rows = 5,
+    });
+    defer t.deinit(alloc);
+
+    var s = t.vtStream();
+    defer s.deinit();
+
+    s.nextSlice("top\r\n\x1b[41m\x1b[K\x1b[0m\r\nbottom");
+
+    const pages = &t.screens.active.pages;
+    const page = pages.pages.last.?.page();
+
+    var formatter: PageFormatter = .init(page, .plain);
+    try formatter.format(&builder.writer);
+    try testing.expectEqualStrings("top\n\nbottom", builder.writer.buffered());
 }
