@@ -932,6 +932,19 @@ pub const PageListFormatter = struct {
 
             page_state = try formatter.formatWithState(writer);
         }
+
+        // Blank rows after the last text are still rows of the screen, and a VT
+        // reader needs them for its screen to line up with this one.
+        if (self.opts.emit == .vt and self.bottom_right == null) {
+            if (page_state) |state| for (1..state.rows) |_| {
+                try writer.writeAll("\r\n");
+                if (self.pin_map) |m| {
+                    const points = m.map.points.items;
+                    const last: Coordinate = if (points.len > 0) points[points.len - 1] else .{ .x = 0, .y = 0 };
+                    m.map.points.appendNTimes(m.alloc, last, 2) catch return error.WriteFailed;
+                }
+            };
+        }
     }
 };
 
@@ -7099,4 +7112,46 @@ test "Page plain skips a row with only a background color" {
     var formatter: PageFormatter = .init(page, .plain);
     try formatter.format(&builder.writer);
     try testing.expectEqualStrings("top\n\nbottom", builder.writer.buffered());
+}
+
+test "Screen VT keeps blank rows at the bottom of the screen" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var builder: std.Io.Writer.Allocating = .init(alloc);
+    defer builder.deinit();
+
+    var t = try Terminal.init(io, alloc, .{ .cols = 10, .rows = 4 });
+    defer t.deinit(alloc);
+
+    var s = t.vtStream();
+    defer s.deinit();
+
+    s.nextSlice("a\r\nb\r\nc\r\nd\r\ne\r\n\r\n");
+
+    var formatter: ScreenFormatter = .init(t.screens.active, .{ .emit = .vt });
+    try formatter.format(&builder.writer);
+    try testing.expectEqualStrings("a\r\nb\r\nc\r\nd\r\ne\r\n\r\n", builder.writer.buffered());
+}
+
+test "Screen plain still trims blank rows at the bottom of the screen" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var builder: std.Io.Writer.Allocating = .init(alloc);
+    defer builder.deinit();
+
+    var t = try Terminal.init(io, alloc, .{ .cols = 10, .rows = 4 });
+    defer t.deinit(alloc);
+
+    var s = t.vtStream();
+    defer s.deinit();
+
+    s.nextSlice("a\r\nb\r\nc\r\nd\r\ne\r\n\r\n");
+
+    var formatter: ScreenFormatter = .init(t.screens.active, .{ .emit = .plain });
+    try formatter.format(&builder.writer);
+    try testing.expectEqualStrings("a\nb\nc\nd\ne", builder.writer.buffered());
 }
